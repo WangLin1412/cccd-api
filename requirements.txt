@@ -1,9 +1,8 @@
 flask
 flask-cors
-pytesseract
+easyocr
+numpy
 pillow
 pandas
 gunicorn
 openpyxl
-
-
