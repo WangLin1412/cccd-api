@@ -1,25 +1,23 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import pytesseract
+import easyocr
 from PIL import Image
 import pandas as pd
-import os
-import uuid
+import os, uuid
 
 app = Flask(__name__)
 CORS(app)
 
+reader = easyocr.Reader(['vi'], gpu=False)
+
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "outputs"
-
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
 
 @app.route("/")
 def home():
     return "API CCCD OCR is running"
-
 
 @app.route("/ocr", methods=["POST"])
 def ocr_cccd():
@@ -31,31 +29,26 @@ def ocr_cccd():
     image_path = os.path.join(UPLOAD_FOLDER, filename)
     image_file.save(image_path)
 
-    # OCR
-    text = pytesseract.image_to_string(Image.open(image_path), lang="vie")
+    # OCR bằng EasyOCR
+    results = reader.readtext(image_path, detail=0)
+    text = "\n".join(results)
 
     data = {
         "raw_text": text.strip()
     }
 
-    # Xuất Excel
     excel_name = f"{uuid.uuid4()}.xlsx"
     excel_path = os.path.join(OUTPUT_FOLDER, excel_name)
-
-    df = pd.DataFrame([data])
-    df.to_excel(excel_path, index=False)
-
-    excel_url = request.host_url + "download/" + excel_name
+    pd.DataFrame([data]).to_excel(excel_path, index=False)
 
     return jsonify({
         "data": data,
-        "excel_url": excel_url
+        "excel_url": request.host_url + "download/" + excel_name
     })
-
 
 @app.route("/download/<filename>")
 def download_file(filename):
-    file_path = os.path.join(OUTPUT_FOLDER, filename)
-    if not os.path.exists(file_path):
-        return "File not found", 404
-    return open(file_path, "rb").read()
+    path = os.path.join(OUTPUT_FOLDER, filename)
+    if not os.path.exists(path):
+        return "Not found", 404
+    return open(path, "rb").read()
