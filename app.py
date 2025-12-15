@@ -1,89 +1,61 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import pytesseract
 from PIL import Image
-import io
-import re
-from openpyxl import Workbook
+import pandas as pd
+import os
+import uuid
 
 app = Flask(__name__)
+CORS(app)
 
-# =============================
-# 1) HÀM OCR ẢNH
-# =============================
-def ocr_image(image_bytes):
-    img = Image.open(io.BytesIO(image_bytes))
-    text = pytesseract.image_to_string(img, lang="vie")
-    return text
+UPLOAD_FOLDER = "uploads"
+OUTPUT_FOLDER = "outputs"
 
-# =============================
-# 2) HÀM TRÍCH XUẤT THÔNG TIN CCCD
-# =============================
-def extract_cccd_info(text):
-    info = {}
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-    patterns = {
-        "ho_ten": r"Họ tên[:\s]*([A-ZÀ-Ỹ\s]+)",
-        "so_cccd": r"\b0\d{11}\b",
-        "ngay_sinh": r"Ngày sinh[:\s]*([0-9/]+)",
-        "gioi_tinh": r"Giới tính[:\s]*(Nam|Nữ)",
-        "quoc_tich": r"Quốc tịch[:\s]*([A-Za-zÀ-ỹ\s]+)",
-        "dia_chi": r"(Thường trú|Địa chỉ)[:\s]*(.+)",
-        "ngay_cap": r"Ngày cấp[:\s]*([0-9/]+)"
-    }
 
-    for key, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            info[key] = match.group(1).strip()
-
-    return info
-
-# =============================
-# 3) TẠO FILE EXCEL
-# =============================
-def create_excel(data):
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "CCCD"
-
-    ws.append(["Trường", "Giá trị"])
-
-    for k, v in data.items():
-        ws.append([k, v])
-
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
-    return output
-
-# =============================
-# 4) API /ocr-cccd
-# =============================
-@app.route("/ocr-cccd", methods=["POST"])
-def ocr_cccd():
-    if "file" not in request.files:
-        return jsonify({"error": "Không có file upload"}), 400
-
-    file = request.files["file"]
-    img_bytes = file.read()
-
-    text = ocr_image(img_bytes)
-    data = extract_cccd_info(text)
-
-    if len(data) == 0:
-        return jsonify({"error": "Không trích xuất được thông tin"}), 400
-
-    excel_file = create_excel(data)
-
-    return send_file(
-        excel_file,
-        download_name="cccd.xlsx",
-        as_attachment=True
-    )
-
-@app.route("/", methods=["GET"])
+@app.route("/")
 def home():
     return "API CCCD OCR is running"
 
-if __name__ == "__main__":
-    app.run(debug=True)
+
+@app.route("/ocr", methods=["POST"])
+def ocr_cccd():
+    if "image" not in request.files:
+        return jsonify({"error": "No image uploaded"}), 400
+
+    image_file = request.files["image"]
+    filename = f"{uuid.uuid4()}.jpg"
+    image_path = os.path.join(UPLOAD_FOLDER, filename)
+    image_file.save(image_path)
+
+    # OCR
+    text = pytesseract.image_to_string(Image.open(image_path), lang="vie")
+
+    data = {
+        "raw_text": text.strip()
+    }
+
+    # Xuất Excel
+    excel_name = f"{uuid.uuid4()}.xlsx"
+    excel_path = os.path.join(OUTPUT_FOLDER, excel_name)
+
+    df = pd.DataFrame([data])
+    df.to_excel(excel_path, index=False)
+
+    excel_url = request.host_url + "download/" + excel_name
+
+    return jsonify({
+        "data": data,
+        "excel_url": excel_url
+    })
+
+
+@app.route("/download/<filename>")
+def download_file(filename):
+    file_path = os.path.join(OUTPUT_FOLDER, filename)
+    if not os.path.exists(file_path):
+        return "File not found", 404
+    return open(file_path, "rb").read()
